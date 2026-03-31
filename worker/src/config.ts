@@ -3,9 +3,29 @@ import type {
   KVLike,
   OutputRecordsConfig,
   PolicyConfig,
-  RegionNodeConfig,
   RuntimeConfig,
 } from "./types";
+
+const CN_CT_NODE_IDS = [
+  "1168", "1134", "1124", "1129", "1312", "1127", "1131", "1228",
+  "1136", "1311", "1138", "1151", "1307", "1123", "1310", "1128",
+  "1319", "1214", "1132", "1320", "1169", "1170", "1308", "1227",
+  "1313", "1137", "1306", "1135", "1305", "1218", "1274", "1304",
+];
+
+const CN_CU_NODE_IDS = [
+  "1252", "1259", "1301", "1296", "1276", "1303", "1254", "1298",
+  "1267", "1264", "1300", "1299", "1260", "1253", "1302", "1255",
+  "1262", "1265", "1263", "1258", "1257", "1275", "1277", "1273",
+  "1266", "1278", "1256", "1268", "1297", "1226", "1261",
+];
+
+const CN_CM_NODE_IDS = [
+  "1279", "1237", "1243", "1288", "1249", "1233", "1246", "1294",
+  "1295", "1293", "1286", "1287", "1283", "1245", "1291", "1250",
+  "1280", "1285", "1248", "1292", "1289", "1242", "1290", "1281",
+  "1318", "1244", "1284", "1247", "1321", "1282",
+];
 
 function toInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -27,22 +47,26 @@ async function loadJsonFromKV<T>(
   return JSON.parse(text) as T;
 }
 
-function validateRegions(regions: Record<string, RegionNodeConfig>): void {
-  for (const [region, cfg] of Object.entries(regions)) {
-    if (!cfg.ct?.length || !cfg.cu?.length || !cfg.cm?.length) {
-      throw new Error(`regions 配置错误: ${region} 必须包含 ct/cu/cm 且不能为空数组`);
-    }
+function buildAllCnRegions(): RuntimeConfig["regions"] {
+  const regions: RuntimeConfig["regions"] = {};
+
+  for (const nodeId of CN_CT_NODE_IDS) {
+    regions[`ct_${nodeId}`] = { ct: [nodeId] };
   }
+  for (const nodeId of CN_CU_NODE_IDS) {
+    regions[`cu_${nodeId}`] = { cu: [nodeId] };
+  }
+  for (const nodeId of CN_CM_NODE_IDS) {
+    regions[`cm_${nodeId}`] = { cm: [nodeId] };
+  }
+
+  return regions;
 }
 
 export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
   const targetsCfg = await loadJsonFromKV<{ targets: string[] }>(
     env.CONFIG_KV,
     "config:targets",
-  );
-  const regionsCfg = await loadJsonFromKV<{ regions: Record<string, RegionNodeConfig> }>(
-    env.CONFIG_KV,
-    "config:regions",
   );
   const policyCfg = await loadJsonFromKV<Partial<PolicyConfig>>(
     env.CONFIG_KV,
@@ -56,11 +80,6 @@ export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
   if (!targetsCfg?.targets?.length) {
     throw new Error("缺少 config:targets 或 targets 为空");
   }
-  if (!regionsCfg?.regions || !Object.keys(regionsCfg.regions).length) {
-    throw new Error("缺少 config:regions 或 regions 为空");
-  }
-
-  validateRegions(regionsCfg.regions);
 
   const policy: PolicyConfig = {
     switchThresholdMs:
@@ -85,7 +104,7 @@ export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
 
   return {
     targets: targetsCfg.targets,
-    regions: regionsCfg.regions,
+    regions: buildAllCnRegions(),
     policy,
     output,
   };

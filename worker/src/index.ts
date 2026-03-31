@@ -13,8 +13,6 @@ import type { Env, IspCode } from "./types";
 const ISP_LIST: IspCode[] = ["ct", "cu", "cm"];
 const STATE_LAST_RUN_PAYLOAD = "state:last_run_payload";
 const CONFIG_TARGETS_KEY = "config:targets";
-const CONFIG_REGIONS_KEY = "config:regions";
-const CONFIG_POLICY_KEY = "config:policy";
 const CONFIG_OUTPUT_KEY = "config:output";
 
 interface RunPayload {
@@ -36,13 +34,6 @@ interface RunPayload {
 
 interface ConfigPayload {
   targets: { targets: string[] };
-  regions: Record<string, { ct: string[]; cu: string[]; cm: string[] }>;
-  policy: {
-    switchThresholdMs: number;
-    requiredStreak: number;
-    minSamples: number;
-    wsTimeoutSec: number;
-  };
   output: {
     ctRecord: string;
     cuRecord: string;
@@ -85,44 +76,16 @@ async function loadPanelConfig(env: Env): Promise<ConfigPayload> {
   const targets =
     (await loadJsonFromConfigKV<{ targets: string[] }>(env, CONFIG_TARGETS_KEY)) ??
     { targets: [] };
-  const regions =
-    (await loadJsonFromConfigKV<{ regions: ConfigPayload["regions"] }>(env, CONFIG_REGIONS_KEY))
-      ?.regions ?? {};
-  const policy =
-    (await loadJsonFromConfigKV<ConfigPayload["policy"]>(env, CONFIG_POLICY_KEY)) ?? {
-      switchThresholdMs: toInt(env.POLICY_DEFAULT_SWITCH_THRESHOLD_MS, 15),
-      requiredStreak: toInt(env.POLICY_DEFAULT_REQUIRED_STREAK, 2),
-      minSamples: toInt(env.POLICY_DEFAULT_MIN_SAMPLES, 1),
-      wsTimeoutSec: toInt(env.POLICY_DEFAULT_WS_TIMEOUT_SEC, 10),
-    };
   const output =
     (await loadJsonFromConfigKV<ConfigPayload["output"]>(env, CONFIG_OUTPUT_KEY)) ??
     defaultOutputConfig(env);
 
-  return { targets, regions, policy, output };
+  return { targets, output };
 }
 
 function validateConfigPayload(payload: ConfigPayload): void {
   if (!Array.isArray(payload.targets?.targets) || payload.targets.targets.length === 0) {
     throw new Error("targets.targets 必须为非空数组");
-  }
-  if (!payload.regions || Object.keys(payload.regions).length === 0) {
-    throw new Error("regions 必须为非空对象");
-  }
-  for (const [region, cfg] of Object.entries(payload.regions)) {
-    if (!cfg.ct?.length || !cfg.cu?.length || !cfg.cm?.length) {
-      throw new Error(`regions.${region} 必须包含非空 ct/cu/cm 数组`);
-    }
-  }
-
-  const p = payload.policy;
-  if (
-    !Number.isFinite(p.switchThresholdMs) ||
-    !Number.isFinite(p.requiredStreak) ||
-    !Number.isFinite(p.minSamples) ||
-    !Number.isFinite(p.wsTimeoutSec)
-  ) {
-    throw new Error("policy 字段必须为数字");
   }
 
   const o = payload.output;
@@ -138,11 +101,6 @@ async function savePanelConfig(env: Env, payload: ConfigPayload): Promise<void> 
   validateConfigPayload(payload);
 
   await env.CONFIG_KV.put(CONFIG_TARGETS_KEY, JSON.stringify(payload.targets));
-  await env.CONFIG_KV.put(
-    CONFIG_REGIONS_KEY,
-    JSON.stringify({ regions: payload.regions }),
-  );
-  await env.CONFIG_KV.put(CONFIG_POLICY_KEY, JSON.stringify(payload.policy));
   await env.CONFIG_KV.put(CONFIG_OUTPUT_KEY, JSON.stringify(payload.output));
 }
 

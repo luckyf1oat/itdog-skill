@@ -55,25 +55,26 @@ export function renderPanelHtml(): string {
 
   <div class="card">
     <strong>配置管理（保存到 CONFIG_KV）</strong>
-    <div class="muted">支持在线编辑：targets / regions / policy / output</div>
+    <div class="muted">仅需两项：优选域名 + 解析域名（系统自动覆盖国内全部节点）</div>
     <div style="margin-top:10px;">
-      <div><strong>targets</strong> <span class="muted">(JSON: {"targets":[...]})</span></div>
+      <div><strong>1) 优选域名（每行一个）</strong></div>
       <textarea id="cfgTargets" style="width:100%;min-height:100px;margin:6px 0 10px;"></textarea>
 
-      <div><strong>regions</strong> <span class="muted">(JSON: {"north":{"ct":[...],"cu":[...],"cm":[...]}, ...})</span></div>
-      <textarea id="cfgRegions" style="width:100%;min-height:140px;margin:6px 0 10px;"></textarea>
-
-      <div><strong>policy</strong> <span class="muted">(JSON)</span></div>
-      <textarea id="cfgPolicy" style="width:100%;min-height:90px;margin:6px 0 10px;"></textarea>
-
-      <div><strong>output</strong> <span class="muted">(JSON: ct/cu/cm/cf/ttl/proxied)</span></div>
-      <textarea id="cfgOutput" style="width:100%;min-height:110px;margin:6px 0 10px;"></textarea>
+      <div><strong>2) 解析域名</strong></div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center;margin:6px 0 10px;">
+        <label for="ctRecord">电信(ct)</label><input id="ctRecord" style="padding:6px 8px;" />
+        <label for="cuRecord">联通(cu)</label><input id="cuRecord" style="padding:6px 8px;" />
+        <label for="cmRecord">移动(cm)</label><input id="cmRecord" style="padding:6px 8px;" />
+        <label for="cfRecord">全集(cf)</label><input id="cfRecord" style="padding:6px 8px;" />
+      </div>
 
       <button id="saveCfgBtn">保存配置</button>
     </div>
   </div>
 
   <script>
+    let outputExtra = { ttl: 60, proxied: false };
+
     async function loadState() {
       const status = document.getElementById('status');
       status.textContent = '加载中...';
@@ -92,10 +93,18 @@ export function renderPanelHtml(): string {
         const res = await fetch('/api/config');
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || '加载配置失败');
-        document.getElementById('cfgTargets').value = JSON.stringify(data.targets || {targets: []}, null, 2);
-        document.getElementById('cfgRegions').value = JSON.stringify(data.regions || {}, null, 2);
-        document.getElementById('cfgPolicy').value = JSON.stringify(data.policy || {}, null, 2);
-        document.getElementById('cfgOutput').value = JSON.stringify(data.output || {}, null, 2);
+        const targets = (data.targets && Array.isArray(data.targets.targets)) ? data.targets.targets : [];
+        document.getElementById('cfgTargets').value = targets.join('\n');
+
+        const output = data.output || {};
+        document.getElementById('ctRecord').value = output.ctRecord || '';
+        document.getElementById('cuRecord').value = output.cuRecord || '';
+        document.getElementById('cmRecord').value = output.cmRecord || '';
+        document.getElementById('cfRecord').value = output.cfRecord || '';
+        outputExtra = {
+          ttl: Number.isFinite(output.ttl) ? output.ttl : 60,
+          proxied: !!output.proxied,
+        };
       } catch (e) {
         const status = document.getElementById('status');
         status.innerHTML = '<span class="err">配置加载失败</span>';
@@ -145,11 +154,20 @@ export function renderPanelHtml(): string {
       const status = document.getElementById('status');
       status.textContent = '保存配置中...';
       try {
+        const targetLines = document.getElementById('cfgTargets').value
+          .split(/\r?\n/)
+          .map(s => s.trim())
+          .filter(Boolean);
         const payload = {
-          targets: JSON.parse(document.getElementById('cfgTargets').value),
-          regions: JSON.parse(document.getElementById('cfgRegions').value),
-          policy: JSON.parse(document.getElementById('cfgPolicy').value),
-          output: JSON.parse(document.getElementById('cfgOutput').value),
+          targets: { targets: targetLines },
+          output: {
+            ctRecord: document.getElementById('ctRecord').value.trim(),
+            cuRecord: document.getElementById('cuRecord').value.trim(),
+            cmRecord: document.getElementById('cmRecord').value.trim(),
+            cfRecord: document.getElementById('cfRecord').value.trim(),
+            ttl: outputExtra.ttl,
+            proxied: outputExtra.proxied,
+          },
         };
         const res = await fetch('/api/config', {
           method: 'POST',
@@ -162,7 +180,7 @@ export function renderPanelHtml(): string {
         }
         status.textContent = '配置已保存';
       } catch (e) {
-        status.innerHTML = '<span class="err">保存失败：' + (e && e.message ? e.message : '请检查 JSON 格式') + '</span>';
+        status.innerHTML = '<span class="err">保存失败：' + (e && e.message ? e.message : '请检查配置') + '</span>';
       }
     });
 

@@ -1,9 +1,9 @@
 export type IspCode = "ct" | "cu" | "cm";
 
 export interface RegionNodeConfig {
-  ct: string[];
-  cu: string[];
-  cm: string[];
+  ct?: string[];
+  cu?: string[];
+  cm?: string[];
 }
 
 export interface TargetsConfig {

@@ -181,12 +181,12 @@ npm run dev
 - `GET /run`：立即执行一轮
 - `GET /api/state`：读取状态快照
 
-面板现已支持在线配置并保存到 KV：
+面板现已支持在线配置并保存到 KV（简化为两项）：
 
 - 待测速目标（targets）
-- 地区/运营商节点（regions）
-- 策略参数（policy）
 - DNS 输出记录（output）
+
+并且会自动覆盖国内全部 itdog 节点参与优选，最终仍写入 4 个域名（ct/cu/cm/cf）。
 
 ### 自动部署（GitHub Actions）
 

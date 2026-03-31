@@ -37,11 +37,11 @@ wrangler secret put CF_ZONE_ID
 
 ## 2. 写入 KV 配置
 
-写入以下三个 key：
+写入以下配置 key：
 
 - `config:targets`（候选优选域名）
-- `config:regions`（地区与三网节点映射）
-- `config:policy`（策略参数）
+- `config:policy`（可选，策略参数）
+- `config:output`（可选，解析域名与 DNS 参数）
 
 可直接使用 `examples/` 目录的模板。
 
@@ -49,7 +49,6 @@ wrangler secret put CF_ZONE_ID
 
 ```bash
 wrangler kv key put --binding=CONFIG_KV "config:targets" "$(cat worker/examples/config.targets.json)"
-wrangler kv key put --binding=CONFIG_KV "config:regions" "$(cat worker/examples/config.regions.json)"
 wrangler kv key put --binding=CONFIG_KV "config:policy" "$(cat worker/examples/config.policy.json)"
 ```
 
@@ -72,10 +71,14 @@ npm run dev
 - `GET /run`：立即执行一轮测速+同步
 - `GET /health`：健康检查
 - `GET /api/state`：读取当前状态（含最近一次执行快照）
-- `GET /api/config`：读取当前配置（targets/regions/policy/output）
+- `GET /api/config`：读取当前配置（targets/output）
 - `POST /api/config`：保存配置到 `CONFIG_KV`
 
-> 现在支持在 `/` 前端面板直接编辑并保存 `targets/regions/policy/output`，无需手动执行 `wrangler kv key put`。
+> 现在支持在 `/` 前端面板直接编辑并保存两项配置：
+> 1) 优选域名（targets）
+> 2) 解析域名（output 的 ct/cu/cm/cf）
+>
+> 系统会自动使用**国内全部 itdog 节点**参与优选，并将结果聚合写入 4 个域名。
 
 部署：
 
@@ -87,9 +90,9 @@ npm run deploy
 
 ## 4. 运行逻辑说明
 
-1. 按 `config:regions` 遍历每个地区的 `ct/cu/cm` 节点。
+1. 系统内置国内全部 itdog 节点（ct/cu/cm），自动逐节点执行测速。
 2. 使用 `config:targets` 对候选域名批量测速。
-3. 对每个 `地区 x 运营商` 选延迟最低 IP。
+3. 对每个 `节点 x 运营商` 选延迟最低 IP。
 4. 使用防抖策略：
    - `switchThresholdMs`：最小改善阈值（ms）
    - `requiredStreak`：连续领先轮数才切换
