@@ -103,6 +103,16 @@ export function renderPanelHtml(): string {
     let outputExtra = { ttl: 60, proxied: false };
     let progressTimer = null;
 
+    function appendConsoleLine(line) {
+      const consoleEl = document.getElementById('console');
+      const prefix = '[' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '] ';
+      const previous = (consoleEl.textContent && consoleEl.textContent !== '(暂无日志)')
+        ? (consoleEl.textContent + '\\n')
+        : '';
+      consoleEl.textContent = previous + prefix + line;
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+
     function setProgress(progress) {
       const bar = document.getElementById('progressBar');
       const text = document.getElementById('progressText');
@@ -143,6 +153,7 @@ export function renderPanelHtml(): string {
         status.textContent = '已更新';
       } catch (e) {
         status.innerHTML = '<span class="err">加载失败</span>';
+        appendConsoleLine('状态刷新失败');
       }
     }
 
@@ -199,17 +210,21 @@ export function renderPanelHtml(): string {
     document.getElementById('runBtn').addEventListener('click', async () => {
       const status = document.getElementById('status');
       status.textContent = '任务启动中...';
+      appendConsoleLine('已发送执行请求');
       try {
         const res = await fetch('/run');
         const data = await res.json();
         if (data.started) {
           status.textContent = '任务已启动，正在执行...';
+          appendConsoleLine('任务已启动，等待后端进度...');
         } else {
           status.textContent = data.message || '已有任务正在执行';
+          appendConsoleLine(data.message || '已有任务正在执行');
         }
         await loadState();
       } catch {
         status.innerHTML = '<span class="err">执行失败</span>';
+        appendConsoleLine('执行请求失败');
       }
     });
 
