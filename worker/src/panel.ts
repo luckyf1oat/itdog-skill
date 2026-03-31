@@ -1,6 +1,18 @@
 interface PanelPayload {
   ok: boolean;
   timestamp?: string | null;
+  progress?: {
+    running: boolean;
+    runId: string;
+    totalSteps: number;
+    completedSteps: number;
+    phase: string;
+    message: string;
+    percent: number;
+    startedAt: string;
+    finishedAt?: string;
+    error?: string;
+  } | null;
   selected?: {
     ct: string[];
     cu: string[];
@@ -26,6 +38,9 @@ export function renderPanelHtml(): string {
     button:hover { background: #f5f5f5; }
     .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
     .muted { color: #6b7280; font-size: 13px; }
+    .progress-wrap { margin-top: 8px; }
+    .progress-track { width: 100%; height: 12px; background: #f3f4f6; border-radius: 999px; overflow: hidden; }
+    .progress-bar { height: 100%; width: 0%; background: #2563eb; transition: width .2s ease; }
     code { background: #f3f4f6; padding: 2px 5px; border-radius: 6px; }
     ul { margin: 6px 0 0 18px; }
     .err { color: #dc2626; }
@@ -41,6 +56,11 @@ export function renderPanelHtml(): string {
 
   <div class="card">
     <div><strong>最近执行时间：</strong><span id="ts">-</span></div>
+    <div class="progress-wrap">
+      <div><strong>执行进度：</strong><span id="progressText" class="muted">未开始</span></div>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+      <div id="progressMeta" class="muted" style="margin-top:6px;"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -74,6 +94,27 @@ export function renderPanelHtml(): string {
 
   <script>
     let outputExtra = { ttl: 60, proxied: false };
+    let progressTimer = null;
+
+    function setProgress(progress) {
+      const bar = document.getElementById('progressBar');
+      const text = document.getElementById('progressText');
+      const meta = document.getElementById('progressMeta');
+
+      if (!progress) {
+        bar.style.width = '0%';
+        text.textContent = '未开始';
+        meta.textContent = '';
+        return;
+      }
+
+      const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+      bar.style.width = percent + '%';
+      text.textContent = progress.running
+        ? ('进行中 ' + percent + '%')
+        : (progress.phase === '失败' ? '执行失败' : '已完成 100%');
+      meta.textContent = (progress.message || '') + '（' + (progress.completedSteps || 0) + '/' + (progress.totalSteps || 0) + '）' + (progress.error ? ('，错误：' + progress.error) : '');
+    }
 
     async function loadState() {
       const status = document.getElementById('status');
@@ -118,6 +159,7 @@ export function renderPanelHtml(): string {
 
     function render(payload) {
       document.getElementById('ts').textContent = payload.timestamp || '-';
+      setProgress(payload.progress || null);
 
       const sel = payload.selected || {};
       document.getElementById('selected').innerHTML = [
@@ -139,12 +181,16 @@ export function renderPanelHtml(): string {
     document.getElementById('refreshBtn').addEventListener('click', loadState);
     document.getElementById('runBtn').addEventListener('click', async () => {
       const status = document.getElementById('status');
-      status.textContent = '执行中...';
+      status.textContent = '任务启动中...';
       try {
         const res = await fetch('/run');
         const data = await res.json();
-        render(data);
-        status.textContent = '执行完成';
+        if (data.started) {
+          status.textContent = '任务已启动，正在执行...';
+        } else {
+          status.textContent = data.message || '已有任务正在执行';
+        }
+        await loadState();
       } catch {
         status.innerHTML = '<span class="err">执行失败</span>';
       }
@@ -186,6 +232,7 @@ export function renderPanelHtml(): string {
 
     loadState();
     loadConfig();
+    progressTimer = setInterval(loadState, 3000);
   </script>
 </body>
 </html>`;

@@ -12,6 +12,7 @@ import type { Env, IspCode } from "./types";
 
 const ISP_LIST: IspCode[] = ["ct", "cu", "cm"];
 const STATE_LAST_RUN_PAYLOAD = "state:last_run_payload";
+const STATE_RUN_PROGRESS = "state:run_progress";
 const CONFIG_TARGETS_KEY = "config:targets";
 const CONFIG_OUTPUT_KEY = "config:output";
 
@@ -30,6 +31,19 @@ interface RunPayload {
     cm: string[];
     cf: string[];
   };
+}
+
+interface RunProgressPayload {
+  running: boolean;
+  runId: string;
+  totalSteps: number;
+  completedSteps: number;
+  phase: string;
+  message: string;
+  percent: number;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
 }
 
 interface ConfigPayload {
@@ -107,58 +121,161 @@ async function savePanelConfig(env: Env, payload: ConfigPayload): Promise<void> 
 async function buildStatePayload(env: Env): Promise<Record<string, unknown>> {
   const state = await loadState(env.STATE_KV);
   const selected = buildDnsTargets(state.lastBest);
-  const latestRaw = await env.STATE_KV.get(STATE_LAST_RUN_PAYLOAD);
+  const [latestRaw, progressRaw] = await Promise.all([
+    env.STATE_KV.get(STATE_LAST_RUN_PAYLOAD),
+    env.STATE_KV.get(STATE_RUN_PROGRESS),
+  ]);
   const latest = latestRaw ? (JSON.parse(latestRaw) as Record<string, unknown>) : null;
+  const progress = progressRaw
+    ? (JSON.parse(progressRaw) as RunProgressPayload)
+    : null;
 
   return {
     ok: true,
     timestamp: (latest?.timestamp as string) ?? null,
     selected,
     dns: (latest?.dns as Record<string, unknown>) ?? null,
+    progress,
     state,
   };
 }
 
-async function runScheduled(env: Env): Promise<RunPayload> {
+async function saveRunProgress(
+  env: Env,
+  progress: RunProgressPayload,
+): Promise<void> {
+  await env.STATE_KV.put(STATE_RUN_PROGRESS, JSON.stringify(progress));
+}
+
+async function getRunProgress(env: Env): Promise<RunProgressPayload | null> {
+  const raw = await env.STATE_KV.get(STATE_RUN_PROGRESS);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as RunProgressPayload;
+  } catch {
+    return null;
+  }
+}
+
+async function runScheduled(env: Env, runId = new Date().toISOString()): Promise<RunPayload> {
   const cfg = await loadRuntimeConfig(env);
   const state = await loadState(env.STATE_KV);
   const nowIso = new Date().toISOString();
 
-  for (const [region, regionCfg] of Object.entries(cfg.regions)) {
-    for (const isp of ISP_LIST) {
-      const nodes = regionCfg[isp];
-      if (!nodes?.length) continue;
+  const jobs = Object.entries(cfg.regions).flatMap(([region, regionCfg]) =>
+    ISP_LIST.map((isp) => ({ region, isp, nodes: regionCfg[isp] ?? [] })).filter(
+      (item) => item.nodes.length > 0,
+    ),
+  );
 
-      try {
-        const metrics = await probeBatchPing(
-          cfg.targets,
-          nodes,
-          cfg.policy.wsTimeoutSec,
-        );
-        updateBestForPair({
-          region,
-          isp,
-          metrics,
-          policy: cfg.policy,
-          lastBest: state.lastBest,
-          pending: state.pending,
-          nowIso,
-        });
-      } catch (error) {
-        console.error(`测速失败 region=${region} isp=${isp}`, error);
-      }
+  const totalSteps = jobs.length + 4;
+  let completedSteps = 0;
+
+  await saveRunProgress(env, {
+    running: true,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "测速",
+    message: "开始执行全节点测速",
+    percent: 0,
+    startedAt: nowIso,
+  });
+
+  for (const job of jobs) {
+    try {
+      const metrics = await probeBatchPing(
+        cfg.targets,
+        job.nodes,
+        cfg.policy.wsTimeoutSec,
+      );
+      updateBestForPair({
+        region: job.region,
+        isp: job.isp,
+        metrics,
+        policy: cfg.policy,
+        lastBest: state.lastBest,
+        pending: state.pending,
+        nowIso,
+      });
+    } catch (error) {
+      console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
     }
+
+    completedSteps += 1;
+    await saveRunProgress(env, {
+      running: true,
+      runId,
+      totalSteps,
+      completedSteps,
+      phase: "测速",
+      message: `测速进度 ${completedSteps}/${jobs.length}`,
+      percent: Math.round((completedSteps / totalSteps) * 100),
+      startedAt: nowIso,
+    });
   }
 
   await saveState(env.STATE_KV, state.lastBest, state.pending);
 
   const dnsTargets = buildDnsTargets(state.lastBest);
   const output = cfg.output;
+  await saveRunProgress(env, {
+    running: true,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "DNS",
+    message: "同步 DNS: ct",
+    percent: Math.round((completedSteps / totalSteps) * 100),
+    startedAt: nowIso,
+  });
+  const ct = await syncARecordSet(env, output.ctRecord, dnsTargets.ct, output);
+  completedSteps += 1;
+
+  await saveRunProgress(env, {
+    running: true,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "DNS",
+    message: "同步 DNS: cu",
+    percent: Math.round((completedSteps / totalSteps) * 100),
+    startedAt: nowIso,
+  });
+  const cu = await syncARecordSet(env, output.cuRecord, dnsTargets.cu, output);
+  completedSteps += 1;
+
+  await saveRunProgress(env, {
+    running: true,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "DNS",
+    message: "同步 DNS: cm",
+    percent: Math.round((completedSteps / totalSteps) * 100),
+    startedAt: nowIso,
+  });
+  const cm = await syncARecordSet(env, output.cmRecord, dnsTargets.cm, output);
+  completedSteps += 1;
+
+  await saveRunProgress(env, {
+    running: true,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "DNS",
+    message: "同步 DNS: cf",
+    percent: Math.round((completedSteps / totalSteps) * 100),
+    startedAt: nowIso,
+  });
+  const cf = await syncARecordSet(env, output.cfRecord, dnsTargets.cf, output);
+  completedSteps += 1;
+
   const result = {
-    ct: await syncARecordSet(env, output.ctRecord, dnsTargets.ct, output),
-    cu: await syncARecordSet(env, output.cuRecord, dnsTargets.cu, output),
-    cm: await syncARecordSet(env, output.cmRecord, dnsTargets.cm, output),
-    cf: await syncARecordSet(env, output.cfRecord, dnsTargets.cf, output),
+    ct,
+    cu,
+    cm,
+    cf,
   };
 
   const payload: RunPayload = {
@@ -169,19 +286,68 @@ async function runScheduled(env: Env): Promise<RunPayload> {
   };
 
   await env.STATE_KV.put(STATE_LAST_RUN_PAYLOAD, JSON.stringify(payload));
+  await saveRunProgress(env, {
+    running: false,
+    runId,
+    totalSteps,
+    completedSteps,
+    phase: "完成",
+    message: "执行完成",
+    percent: 100,
+    startedAt: nowIso,
+    finishedAt: new Date().toISOString(),
+  });
   return payload;
+}
+
+async function triggerManualRun(
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<{ ok: boolean; started: boolean; message: string; runId?: string }> {
+  const current = await getRunProgress(env);
+  if (current?.running) {
+    return {
+      ok: true,
+      started: false,
+      message: `已有任务在执行（${current.completedSteps}/${current.totalSteps}）`,
+      runId: current.runId,
+    };
+  }
+
+  const runId = `manual-${Date.now()}`;
+  ctx.waitUntil(
+    runScheduled(env, runId).catch(async (error) => {
+      const nowIso = new Date().toISOString();
+      const partial = await getRunProgress(env);
+      await saveRunProgress(env, {
+        running: false,
+        runId,
+        totalSteps: partial?.totalSteps ?? 0,
+        completedSteps: partial?.completedSteps ?? 0,
+        phase: "失败",
+        message: "执行失败",
+        percent: partial?.percent ?? 0,
+        startedAt: partial?.startedAt ?? nowIso,
+        finishedAt: nowIso,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      console.error("manual run 执行失败", error);
+    }),
+  );
+
+  return { ok: true, started: true, message: "任务已开始", runId };
 }
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     try {
-      await runScheduled(env);
+      await runScheduled(env, `cron-${Date.now()}`);
     } catch (error) {
       console.error("scheduled 执行失败", error);
     }
   },
 
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/") {
       return new Response(renderPanelHtml(), {
@@ -217,7 +383,7 @@ export default {
       }
     }
     if (url.pathname === "/run") {
-      const payload = await runScheduled(env);
+      const payload = await triggerManualRun(env, ctx);
       return jsonResponse(payload);
     }
     return new Response("Not Found", { status: 404 });
