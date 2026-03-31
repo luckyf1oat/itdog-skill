@@ -78,6 +78,24 @@ function toBool(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("检测频率过高") ||
+    message.includes("1分钟后重试") ||
+    message.includes("无法从 itdog 响应提取 wss_url/task_id")
+  );
+}
+
+function isInvalidNodeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("检测节点ID") && message.includes("不存在");
+}
+
 async function loadJsonFromConfigKV<T>(env: Env, key: string): Promise<T | null> {
   const raw = await env.CONFIG_KV.get(key);
   if (!raw) return null;
@@ -240,34 +258,76 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
 
   const maxConcurrency = Math.max(1, cfg.policy.maxConcurrency);
   let nextJobIndex = 0;
+  let rateLimitUntil = 0;
+
+  const waitForCooldownIfNeeded = async (): Promise<void> => {
+    const waitMs = rateLimitUntil - Date.now();
+    if (waitMs > 0) {
+      await updateProgress({
+        running: true,
+        phase: "测速",
+        message: `触发频率限制，冷却 ${Math.ceil(waitMs / 1000)} 秒后继续`,
+      });
+      await sleep(waitMs);
+    }
+  };
 
   const runJobWorker = async (): Promise<void> => {
     while (nextJobIndex < jobs.length) {
       await assertRunActive(env, runId);
+      await waitForCooldownIfNeeded();
 
       const currentIndex = nextJobIndex;
       nextJobIndex += 1;
       const job = jobs[currentIndex];
 
-      try {
-        const metrics = await probeBatchPing(
-          cfg.targets,
-          job.nodes,
-          cfg.policy.wsTimeoutSec,
-        );
-        updateBestForPair({
-          region: job.region,
-          isp: job.isp,
-          metrics,
-          policy: cfg.policy,
-          lastBest: state.lastBest,
-          pending: state.pending,
-          nowIso,
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        appendLog(`测速失败 region=${job.region} isp=${job.isp} reason=${reason}`);
-        console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
+      let success = false;
+      let skipped = false;
+
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        await assertRunActive(env, runId);
+
+        try {
+          const metrics = await probeBatchPing(
+            cfg.targets,
+            job.nodes,
+            cfg.policy.wsTimeoutSec,
+          );
+          updateBestForPair({
+            region: job.region,
+            isp: job.isp,
+            metrics,
+            policy: cfg.policy,
+            lastBest: state.lastBest,
+            pending: state.pending,
+            nowIso,
+          });
+          success = true;
+          break;
+        } catch (error) {
+          if (isInvalidNodeError(error)) {
+            const reason = error instanceof Error ? error.message : String(error);
+            appendLog(`节点不可用，已跳过 region=${job.region} isp=${job.isp} reason=${reason}`);
+            skipped = true;
+            break;
+          }
+
+          if (isRateLimitedError(error) && attempt < 2) {
+            rateLimitUntil = Math.max(rateLimitUntil, Date.now() + 65_000);
+            appendLog(`触发频率限制，稍后重试 region=${job.region} isp=${job.isp}`);
+            await waitForCooldownIfNeeded();
+            continue;
+          }
+
+          const reason = error instanceof Error ? error.message : String(error);
+          appendLog(`测速失败 region=${job.region} isp=${job.isp} reason=${reason}`);
+          console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
+          break;
+        }
+      }
+
+      if (!success && !skipped) {
+        // 当前 job 已记录失败日志
       }
 
       completedSteps += 1;

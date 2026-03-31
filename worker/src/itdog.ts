@@ -189,7 +189,8 @@ export async function probeBatchPing(
   const wssUrl = extract(content, /var wss_url='(.*)';/);
   const taskId = extract(content, /var task_id='(.*)';/);
   if (!wssUrl || !taskId) {
-    throw new Error("无法从 itdog 响应提取 wss_url/task_id");
+    const compact = content.replace(/\s+/g, " ").slice(0, 220);
+    throw new Error(`无法从 itdog 响应提取 wss_url/task_id, snippet=${compact}`);
   }
 
   const wsRows = await runTaskAndCollect(wssUrl, taskId, timeoutSec);
