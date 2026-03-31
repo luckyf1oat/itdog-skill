@@ -128,7 +128,7 @@ export function renderPanelHtml(): string {
       if (!logs.length) {
         consoleEl.textContent = '(暂无日志)';
       } else {
-        consoleEl.textContent = logs.join('\n');
+        consoleEl.textContent = logs.join('\\n');
         consoleEl.scrollTop = consoleEl.scrollHeight;
       }
     }
