@@ -259,6 +259,7 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
   const maxConcurrency = Math.max(1, cfg.policy.maxConcurrency);
   let nextJobIndex = 0;
   let rateLimitUntil = 0;
+  let stopProbing = false;
 
   const waitForCooldownIfNeeded = async (): Promise<void> => {
     const waitMs = rateLimitUntil - Date.now();
@@ -274,6 +275,8 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
 
   const runJobWorker = async (): Promise<void> => {
     while (nextJobIndex < jobs.length) {
+      if (stopProbing) return;
+
       await assertRunActive(env, runId);
       await waitForCooldownIfNeeded();
 
@@ -313,10 +316,21 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
           }
 
           if (isRateLimitedError(error) && attempt < 2) {
-            rateLimitUntil = Math.max(rateLimitUntil, Date.now() + 65_000);
+            rateLimitUntil = Math.max(rateLimitUntil, Date.now() + 12_000);
             appendLog(`触发频率限制，稍后重试 region=${job.region} isp=${job.isp}`);
             await waitForCooldownIfNeeded();
             continue;
+          }
+
+          if (isRateLimitedError(error)) {
+            stopProbing = true;
+            appendLog("限频仍未恢复，停止本轮剩余测速，直接进入 DNS 同步");
+            await updateProgress({
+              running: true,
+              phase: "测速",
+              message: "限频持续，提前结束测速阶段",
+            });
+            break;
           }
 
           const reason = error instanceof Error ? error.message : String(error);
@@ -339,7 +353,7 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
     }
   };
 
-  const workerCount = Math.min(maxConcurrency, jobs.length || 1);
+  const workerCount = Math.min(maxConcurrency, jobs.length || 1, 2);
   await Promise.all(Array.from({ length: workerCount }, () => runJobWorker()));
 
   await assertRunActive(env, runId);
