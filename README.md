@@ -8,6 +8,14 @@
 
 这是一个 [Clawdbot](https://github.com/clawdbot/clawdbot) 技能插件，提供 itdog.cn 网络测速功能。纯 Python 实现，无需浏览器，支持从全国/海外节点进行 Ping 测试和 HTTP 网站测速。
 
+此外，仓库现已包含一个 **Cloudflare Workers 自动优选子项目**（`worker/`）：
+
+- 定时执行 itdog 批量测速
+- 按地区与三网（ct/cu/cm）选优
+- 自动同步到 4 个 DNS 记录（ct/cu/cm/cf）
+- 提供简易前端面板（`/`）查看状态并手动触发
+- 支持 GitHub Actions 自动部署
+
 ## 📦 安装
 
 ```bash
@@ -154,6 +162,40 @@ for r in sorted(results, key=lambda x: x['latency'])[:3]:
 ## 🔧 技术细节
 
 详见 [references/api.md](references/api.md)
+
+## ☁️ Worker 自动优选（新增）
+
+`worker/` 目录提供 Cloudflare Workers 版本实现，适合做 Cloudflare IP 自动优选与 DNS 回写。
+
+### 快速开始
+
+```bash
+cd worker
+npm install
+npm run dev
+```
+
+访问：
+
+- `GET /`：前端面板
+- `GET /run`：立即执行一轮
+- `GET /api/state`：读取状态快照
+
+### 自动部署（GitHub Actions）
+
+仓库内置工作流：`.github/workflows/deploy-worker.yml`
+
+触发条件：
+
+- push 到 `main/master` 且变更 `worker/**`
+- 手动触发 `workflow_dispatch`
+
+需要在仓库 Secrets 配置：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+更详细配置与 KV 写入步骤请查看：[`worker/README.md`](worker/README.md)
 
 ## 📄 License
 
