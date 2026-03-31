@@ -85,7 +85,7 @@ jobs:
             exit 1
           fi
 
-          python -c "import re,sys; p='wrangler.toml'; t=open(p,'r',encoding='utf-8').read(); c=sys.argv[1]; s=sys.argv[2]; t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"CONFIG_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', r'\\1'+c+r'\\2', t, flags=re.MULTILINE); t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"STATE_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', r'\\1'+s+r'\\2', t, flags=re.MULTILINE); open(p,'w',encoding='utf-8').write(t); print('Bound CONFIG_KV id:', c); print('Bound STATE_KV id:', s)" "$CONFIG_KV_ID" "$STATE_KV_ID"
+          python -c "import re,sys; config_id,state_id=sys.argv[1],sys.argv[2]; p='wrangler.toml'; t=open(p,'r',encoding='utf-8').read(); t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"CONFIG_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', lambda m: m.group(1)+config_id+m.group(2), t, flags=re.MULTILINE); t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"STATE_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', lambda m: m.group(1)+state_id+m.group(2), t, flags=re.MULTILINE); open(p,'w',encoding='utf-8').write(t); print('Bound CONFIG_KV id:', config_id); print('Bound STATE_KV id:', state_id)" "$CONFIG_KV_ID" "$STATE_KV_ID"
 
       - name: Type check
         run: npm run typecheck
