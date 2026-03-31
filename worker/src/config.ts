@@ -48,6 +48,10 @@ export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
     env.CONFIG_KV,
     "config:policy",
   );
+  const outputCfg = await loadJsonFromKV<Partial<OutputRecordsConfig>>(
+    env.CONFIG_KV,
+    "config:output",
+  );
 
   if (!targetsCfg?.targets?.length) {
     throw new Error("缺少 config:targets 或 targets 为空");
@@ -71,12 +75,12 @@ export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
   };
 
   const output: OutputRecordsConfig = {
-    ctRecord: env.CT_RECORD ?? "ct.example.com",
-    cuRecord: env.CU_RECORD ?? "cu.example.com",
-    cmRecord: env.CM_RECORD ?? "cm.example.com",
-    cfRecord: env.CF_RECORD ?? "cf.example.com",
-    ttl: toInt(env.DNS_TTL, 60),
-    proxied: toBool(env.DNS_PROXIED, false),
+    ctRecord: outputCfg?.ctRecord ?? env.CT_RECORD ?? "ct.example.com",
+    cuRecord: outputCfg?.cuRecord ?? env.CU_RECORD ?? "cu.example.com",
+    cmRecord: outputCfg?.cmRecord ?? env.CM_RECORD ?? "cm.example.com",
+    cfRecord: outputCfg?.cfRecord ?? env.CF_RECORD ?? "cf.example.com",
+    ttl: outputCfg?.ttl ?? toInt(env.DNS_TTL, 60),
+    proxied: outputCfg?.proxied ?? toBool(env.DNS_PROXIED, false),
   };
 
   return {

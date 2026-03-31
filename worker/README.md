@@ -72,6 +72,10 @@ npm run dev
 - `GET /run`：立即执行一轮测速+同步
 - `GET /health`：健康检查
 - `GET /api/state`：读取当前状态（含最近一次执行快照）
+- `GET /api/config`：读取当前配置（targets/regions/policy/output）
+- `POST /api/config`：保存配置到 `CONFIG_KV`
+
+> 现在支持在 `/` 前端面板直接编辑并保存 `targets/regions/policy/output`，无需手动执行 `wrangler kv key put`。
 
 部署：
 

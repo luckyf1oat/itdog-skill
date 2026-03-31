@@ -53,6 +53,26 @@ export function renderPanelHtml(): string {
     <div id="dns"></div>
   </div>
 
+  <div class="card">
+    <strong>配置管理（保存到 CONFIG_KV）</strong>
+    <div class="muted">支持在线编辑：targets / regions / policy / output</div>
+    <div style="margin-top:10px;">
+      <div><strong>targets</strong> <span class="muted">(JSON: {"targets":[...]})</span></div>
+      <textarea id="cfgTargets" style="width:100%;min-height:100px;margin:6px 0 10px;"></textarea>
+
+      <div><strong>regions</strong> <span class="muted">(JSON: {"north":{"ct":[...],"cu":[...],"cm":[...]}, ...})</span></div>
+      <textarea id="cfgRegions" style="width:100%;min-height:140px;margin:6px 0 10px;"></textarea>
+
+      <div><strong>policy</strong> <span class="muted">(JSON)</span></div>
+      <textarea id="cfgPolicy" style="width:100%;min-height:90px;margin:6px 0 10px;"></textarea>
+
+      <div><strong>output</strong> <span class="muted">(JSON: ct/cu/cm/cf/ttl/proxied)</span></div>
+      <textarea id="cfgOutput" style="width:100%;min-height:110px;margin:6px 0 10px;"></textarea>
+
+      <button id="saveCfgBtn">保存配置</button>
+    </div>
+  </div>
+
   <script>
     async function loadState() {
       const status = document.getElementById('status');
@@ -64,6 +84,21 @@ export function renderPanelHtml(): string {
         status.textContent = '已更新';
       } catch (e) {
         status.innerHTML = '<span class="err">加载失败</span>';
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || '加载配置失败');
+        document.getElementById('cfgTargets').value = JSON.stringify(data.targets || {targets: []}, null, 2);
+        document.getElementById('cfgRegions').value = JSON.stringify(data.regions || {}, null, 2);
+        document.getElementById('cfgPolicy').value = JSON.stringify(data.policy || {}, null, 2);
+        document.getElementById('cfgOutput').value = JSON.stringify(data.output || {}, null, 2);
+      } catch (e) {
+        const status = document.getElementById('status');
+        status.innerHTML = '<span class="err">配置加载失败</span>';
       }
     }
 
@@ -106,7 +141,33 @@ export function renderPanelHtml(): string {
       }
     });
 
+    document.getElementById('saveCfgBtn').addEventListener('click', async () => {
+      const status = document.getElementById('status');
+      status.textContent = '保存配置中...';
+      try {
+        const payload = {
+          targets: JSON.parse(document.getElementById('cfgTargets').value),
+          regions: JSON.parse(document.getElementById('cfgRegions').value),
+          policy: JSON.parse(document.getElementById('cfgPolicy').value),
+          output: JSON.parse(document.getElementById('cfgOutput').value),
+        };
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || '保存失败');
+        }
+        status.textContent = '配置已保存';
+      } catch (e) {
+        status.innerHTML = '<span class="err">保存失败：' + (e && e.message ? e.message : '请检查 JSON 格式') + '</span>';
+      }
+    });
+
     loadState();
+    loadConfig();
   </script>
 </body>
 </html>`;

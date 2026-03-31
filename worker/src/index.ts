@@ -12,6 +12,10 @@ import type { Env, IspCode } from "./types";
 
 const ISP_LIST: IspCode[] = ["ct", "cu", "cm"];
 const STATE_LAST_RUN_PAYLOAD = "state:last_run_payload";
+const CONFIG_TARGETS_KEY = "config:targets";
+const CONFIG_REGIONS_KEY = "config:regions";
+const CONFIG_POLICY_KEY = "config:policy";
+const CONFIG_OUTPUT_KEY = "config:output";
 
 interface RunPayload {
   ok: boolean;
@@ -28,6 +32,118 @@ interface RunPayload {
     cm: string[];
     cf: string[];
   };
+}
+
+interface ConfigPayload {
+  targets: { targets: string[] };
+  regions: Record<string, { ct: string[]; cu: string[]; cm: string[] }>;
+  policy: {
+    switchThresholdMs: number;
+    requiredStreak: number;
+    minSamples: number;
+    wsTimeoutSec: number;
+  };
+  output: {
+    ctRecord: string;
+    cuRecord: string;
+    cmRecord: string;
+    cfRecord: string;
+    ttl: number;
+    proxied: boolean;
+  };
+}
+
+function toInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function toBool(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+async function loadJsonFromConfigKV<T>(env: Env, key: string): Promise<T | null> {
+  const raw = await env.CONFIG_KV.get(key);
+  if (!raw) return null;
+  return JSON.parse(raw) as T;
+}
+
+function defaultOutputConfig(env: Env): ConfigPayload["output"] {
+  return {
+    ctRecord: env.CT_RECORD ?? "ct.example.com",
+    cuRecord: env.CU_RECORD ?? "cu.example.com",
+    cmRecord: env.CM_RECORD ?? "cm.example.com",
+    cfRecord: env.CF_RECORD ?? "cf.example.com",
+    ttl: toInt(env.DNS_TTL, 60),
+    proxied: toBool(env.DNS_PROXIED, false),
+  };
+}
+
+async function loadPanelConfig(env: Env): Promise<ConfigPayload> {
+  const targets =
+    (await loadJsonFromConfigKV<{ targets: string[] }>(env, CONFIG_TARGETS_KEY)) ??
+    { targets: [] };
+  const regions =
+    (await loadJsonFromConfigKV<{ regions: ConfigPayload["regions"] }>(env, CONFIG_REGIONS_KEY))
+      ?.regions ?? {};
+  const policy =
+    (await loadJsonFromConfigKV<ConfigPayload["policy"]>(env, CONFIG_POLICY_KEY)) ?? {
+      switchThresholdMs: toInt(env.POLICY_DEFAULT_SWITCH_THRESHOLD_MS, 15),
+      requiredStreak: toInt(env.POLICY_DEFAULT_REQUIRED_STREAK, 2),
+      minSamples: toInt(env.POLICY_DEFAULT_MIN_SAMPLES, 1),
+      wsTimeoutSec: toInt(env.POLICY_DEFAULT_WS_TIMEOUT_SEC, 10),
+    };
+  const output =
+    (await loadJsonFromConfigKV<ConfigPayload["output"]>(env, CONFIG_OUTPUT_KEY)) ??
+    defaultOutputConfig(env);
+
+  return { targets, regions, policy, output };
+}
+
+function validateConfigPayload(payload: ConfigPayload): void {
+  if (!Array.isArray(payload.targets?.targets) || payload.targets.targets.length === 0) {
+    throw new Error("targets.targets 必须为非空数组");
+  }
+  if (!payload.regions || Object.keys(payload.regions).length === 0) {
+    throw new Error("regions 必须为非空对象");
+  }
+  for (const [region, cfg] of Object.entries(payload.regions)) {
+    if (!cfg.ct?.length || !cfg.cu?.length || !cfg.cm?.length) {
+      throw new Error(`regions.${region} 必须包含非空 ct/cu/cm 数组`);
+    }
+  }
+
+  const p = payload.policy;
+  if (
+    !Number.isFinite(p.switchThresholdMs) ||
+    !Number.isFinite(p.requiredStreak) ||
+    !Number.isFinite(p.minSamples) ||
+    !Number.isFinite(p.wsTimeoutSec)
+  ) {
+    throw new Error("policy 字段必须为数字");
+  }
+
+  const o = payload.output;
+  if (!o.ctRecord || !o.cuRecord || !o.cmRecord || !o.cfRecord) {
+    throw new Error("output 的 ctRecord/cuRecord/cmRecord/cfRecord 不能为空");
+  }
+  if (!Number.isFinite(o.ttl) || o.ttl <= 0) {
+    throw new Error("output.ttl 必须为正数");
+  }
+}
+
+async function savePanelConfig(env: Env, payload: ConfigPayload): Promise<void> {
+  validateConfigPayload(payload);
+
+  await env.CONFIG_KV.put(CONFIG_TARGETS_KEY, JSON.stringify(payload.targets));
+  await env.CONFIG_KV.put(
+    CONFIG_REGIONS_KEY,
+    JSON.stringify({ regions: payload.regions }),
+  );
+  await env.CONFIG_KV.put(CONFIG_POLICY_KEY, JSON.stringify(payload.policy));
+  await env.CONFIG_KV.put(CONFIG_OUTPUT_KEY, JSON.stringify(payload.output));
 }
 
 async function buildStatePayload(env: Env): Promise<Record<string, unknown>> {
@@ -120,6 +236,27 @@ export default {
     if (url.pathname === "/api/state") {
       const payload = await buildStatePayload(env);
       return jsonResponse({ ok: true, ...payload });
+    }
+    if (url.pathname === "/api/config" && request.method === "GET") {
+      const payload = await loadPanelConfig(env);
+      return jsonResponse({ ok: true, ...payload });
+    }
+    if (url.pathname === "/api/config" && request.method === "POST") {
+      try {
+        const payload = (await request.json()) as ConfigPayload;
+        await savePanelConfig(env, payload);
+        const latest = await loadPanelConfig(env);
+        return jsonResponse({ ok: true, ...latest });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "保存配置失败";
+        return new Response(
+          JSON.stringify({ ok: false, error: message }, null, 2),
+          {
+            status: 400,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          },
+        );
+      }
     }
     if (url.pathname === "/run") {
       const payload = await runScheduled(env);
