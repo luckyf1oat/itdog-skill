@@ -16,6 +16,7 @@ const STATE_RUN_PROGRESS = "state:run_progress";
 const STATE_ACTIVE_RUN_ID = "state:active_run_id";
 const CONFIG_TARGETS_KEY = "config:targets";
 const CONFIG_OUTPUT_KEY = "config:output";
+const JOB_HARD_TIMEOUT_MS = 45_000;
 
 class RunCancelledError extends Error {
   constructor(message: string) {
@@ -80,6 +81,26 @@ function toBool(value: string | undefined, fallback: boolean): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} 超时（>${Math.ceil(timeoutMs / 1000)}秒）`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function isRateLimitedError(error: unknown): boolean {
@@ -259,24 +280,24 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
   const maxConcurrency = Math.max(1, cfg.policy.maxConcurrency);
   let nextJobIndex = 0;
   let rateLimitUntil = 0;
-  let stopProbing = false;
 
   const waitForCooldownIfNeeded = async (): Promise<void> => {
-    const waitMs = rateLimitUntil - Date.now();
-    if (waitMs > 0) {
+    while (true) {
+      await assertRunActive(env, runId);
+      const waitMs = rateLimitUntil - Date.now();
+      if (waitMs <= 0) return;
+
       await updateProgress({
         running: true,
         phase: "测速",
-        message: `触发频率限制，冷却 ${Math.ceil(waitMs / 1000)} 秒后继续`,
+        message: `触发频率限制，剩余 ${Math.ceil(waitMs / 1000)} 秒后继续`,
       });
-      await sleep(waitMs);
+      await sleep(Math.min(5000, waitMs));
     }
   };
 
   const runJobWorker = async (): Promise<void> => {
     while (nextJobIndex < jobs.length) {
-      if (stopProbing) return;
-
       await assertRunActive(env, runId);
       await waitForCooldownIfNeeded();
 
@@ -291,10 +312,14 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
         await assertRunActive(env, runId);
 
         try {
-          const metrics = await probeBatchPing(
-            cfg.targets,
-            job.nodes,
-            cfg.policy.wsTimeoutSec,
+          const metrics = await withTimeout(
+            probeBatchPing(
+              cfg.targets,
+              job.nodes,
+              cfg.policy.wsTimeoutSec,
+            ),
+            JOB_HARD_TIMEOUT_MS,
+            `测速 region=${job.region} isp=${job.isp}`,
           );
           updateBestForPair({
             region: job.region,
@@ -316,21 +341,10 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
           }
 
           if (isRateLimitedError(error) && attempt < 2) {
-            rateLimitUntil = Math.max(rateLimitUntil, Date.now() + 12_000);
+            rateLimitUntil = Math.max(rateLimitUntil, Date.now() + 65_000);
             appendLog(`触发频率限制，稍后重试 region=${job.region} isp=${job.isp}`);
             await waitForCooldownIfNeeded();
             continue;
-          }
-
-          if (isRateLimitedError(error)) {
-            stopProbing = true;
-            appendLog("限频仍未恢复，停止本轮剩余测速，直接进入 DNS 同步");
-            await updateProgress({
-              running: true,
-              phase: "测速",
-              message: "限频持续，提前结束测速阶段",
-            });
-            break;
           }
 
           const reason = error instanceof Error ? error.message : String(error);
@@ -353,7 +367,7 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
     }
   };
 
-  const workerCount = Math.min(maxConcurrency, jobs.length || 1, 2);
+  const workerCount = Math.min(maxConcurrency, jobs.length || 1);
   await Promise.all(Array.from({ length: workerCount }, () => runJobWorker()));
 
   await assertRunActive(env, runId);
