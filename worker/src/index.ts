@@ -13,8 +13,16 @@ import type { Env, IspCode } from "./types";
 const ISP_LIST: IspCode[] = ["ct", "cu", "cm"];
 const STATE_LAST_RUN_PAYLOAD = "state:last_run_payload";
 const STATE_RUN_PROGRESS = "state:run_progress";
+const STATE_ACTIVE_RUN_ID = "state:active_run_id";
 const CONFIG_TARGETS_KEY = "config:targets";
 const CONFIG_OUTPUT_KEY = "config:output";
+
+class RunCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunCancelledError";
+  }
+}
 
 interface RunPayload {
   ok: boolean;
@@ -158,7 +166,24 @@ async function getRunProgress(env: Env): Promise<RunProgressPayload | null> {
   }
 }
 
+async function setActiveRunId(env: Env, runId: string): Promise<void> {
+  await env.STATE_KV.put(STATE_ACTIVE_RUN_ID, runId);
+}
+
+async function getActiveRunId(env: Env): Promise<string | null> {
+  return env.STATE_KV.get(STATE_ACTIVE_RUN_ID);
+}
+
+async function assertRunActive(env: Env, runId: string): Promise<void> {
+  const activeRunId = await getActiveRunId(env);
+  if (activeRunId && activeRunId !== runId) {
+    throw new RunCancelledError(`任务已被新任务接管（active=${activeRunId}）`);
+  }
+}
+
 async function runScheduled(env: Env, runId = new Date().toISOString()): Promise<RunPayload> {
+  await assertRunActive(env, runId);
+
   const cfg = await loadRuntimeConfig(env);
   const state = await loadState(env.STATE_KV);
   const nowIso = new Date().toISOString();
@@ -186,6 +211,7 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
     finishedAt?: string;
     error?: string;
   }): Promise<void> => {
+    await assertRunActive(env, runId);
     appendLog(params.message);
     await saveRunProgress(env, {
       running: params.running,
@@ -217,6 +243,8 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
 
   const runJobWorker = async (): Promise<void> => {
     while (nextJobIndex < jobs.length) {
+      await assertRunActive(env, runId);
+
       const currentIndex = nextJobIndex;
       nextJobIndex += 1;
       const job = jobs[currentIndex];
@@ -253,22 +281,28 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
   const workerCount = Math.min(maxConcurrency, jobs.length || 1);
   await Promise.all(Array.from({ length: workerCount }, () => runJobWorker()));
 
+  await assertRunActive(env, runId);
+
   await saveState(env.STATE_KV, state.lastBest, state.pending);
 
   const dnsTargets = buildDnsTargets(state.lastBest);
   const output = cfg.output;
+  await assertRunActive(env, runId);
   await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: ct" });
   const ct = await syncARecordSet(env, output.ctRecord, dnsTargets.ct, output);
   completedSteps += 1;
 
+  await assertRunActive(env, runId);
   await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cu" });
   const cu = await syncARecordSet(env, output.cuRecord, dnsTargets.cu, output);
   completedSteps += 1;
 
+  await assertRunActive(env, runId);
   await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cm" });
   const cm = await syncARecordSet(env, output.cmRecord, dnsTargets.cm, output);
   completedSteps += 1;
 
+  await assertRunActive(env, runId);
   await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cf" });
   const cf = await syncARecordSet(env, output.cfRecord, dnsTargets.cf, output);
   completedSteps += 1;
@@ -302,20 +336,26 @@ async function triggerManualRun(
   ctx: ExecutionContext,
 ): Promise<{ ok: boolean; started: boolean; message: string; runId?: string }> {
   const current = await getRunProgress(env);
-  if (current?.running) {
-    return {
-      ok: true,
-      started: false,
-      message: `已有任务在执行（${current.completedSteps}/${current.totalSteps}）`,
-      runId: current.runId,
-    };
-  }
-
   const runId = `manual-${Date.now()}`;
+  const replacedMessage = current?.running
+    ? `已取消旧任务（${current.completedSteps}/${current.totalSteps}），启动新任务`
+    : "任务已开始";
+
+  await setActiveRunId(env, runId);
+
   ctx.waitUntil(
     runScheduled(env, runId).catch(async (error) => {
+      if (error instanceof RunCancelledError) {
+        return;
+      }
+
       const nowIso = new Date().toISOString();
       const partial = await getRunProgress(env);
+      const activeRunId = await getActiveRunId(env);
+      if (activeRunId !== runId) {
+        return;
+      }
+
       await saveRunProgress(env, {
         running: false,
         runId,
@@ -336,14 +376,19 @@ async function triggerManualRun(
     }),
   );
 
-  return { ok: true, started: true, message: "任务已开始", runId };
+  return { ok: true, started: true, message: replacedMessage, runId };
 }
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    const runId = `cron-${Date.now()}`;
+    await setActiveRunId(env, runId);
     try {
-      await runScheduled(env, `cron-${Date.now()}`);
+      await runScheduled(env, runId);
     } catch (error) {
+      if (error instanceof RunCancelledError) {
+        return;
+      }
       console.error("scheduled 执行失败", error);
     }
   },

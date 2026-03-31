@@ -219,13 +219,8 @@ export function renderPanelHtml(): string {
       try {
         const res = await fetch('/run');
         const data = await res.json();
-        if (data.started) {
-          status.textContent = '任务已启动，正在执行...';
-          appendConsoleLine('任务已启动，等待后端进度...');
-        } else {
-          status.textContent = data.message || '已有任务正在执行';
-          appendConsoleLine(data.message || '已有任务正在执行');
-        }
+        status.textContent = data.message || (data.started ? '任务已启动，正在执行...' : '已有任务正在执行');
+        appendConsoleLine(data.message || (data.started ? '任务已启动，等待后端进度...' : '已有任务正在执行'));
         await loadState();
       } catch {
         status.innerHTML = '<span class="err">执行失败</span>';
