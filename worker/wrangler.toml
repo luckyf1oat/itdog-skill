@@ -1,0 +1,26 @@
+name = "itdog-workers-optimizer"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "REPLACE_WITH_CONFIG_KV_ID"
+
+[[kv_namespaces]]
+binding = "STATE_KV"
+id = "REPLACE_WITH_STATE_KV_ID"
+
+# 可选: 历史数据落库
+# [[d1_databases]]
+# binding = "LOG_DB"
+# database_name = "itdog_logs"
+# database_id = "REPLACE_WITH_D1_ID"
+
+[vars]
+POLICY_DEFAULT_SWITCH_THRESHOLD_MS = "15"
+POLICY_DEFAULT_REQUIRED_STREAK = "2"
+POLICY_DEFAULT_MIN_SAMPLES = "1"
+POLICY_DEFAULT_WS_TIMEOUT_SEC = "10"

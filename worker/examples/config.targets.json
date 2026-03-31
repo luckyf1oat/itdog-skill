@@ -1,0 +1,7 @@
+{
+  "targets": [
+    "cf-a.example.net",
+    "cf-b.example.net",
+    "cf-c.example.net"
+  ]
+}

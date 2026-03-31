@@ -1,0 +1,6 @@
+{
+  "switchThresholdMs": 15,
+  "requiredStreak": 2,
+  "minSamples": 1,
+  "wsTimeoutSec": 10
+}
