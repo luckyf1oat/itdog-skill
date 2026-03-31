@@ -44,6 +44,7 @@ interface RunProgressPayload {
   startedAt: string;
   finishedAt?: string;
   error?: string;
+  logs?: string[];
 }
 
 interface ConfigPayload {
@@ -171,15 +172,44 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
   const totalSteps = jobs.length + 4;
   let completedSteps = 0;
 
-  await saveRunProgress(env, {
+  const logs: string[] = [];
+  const appendLog = (message: string): void => {
+    const line = `[${new Date().toISOString()}] ${message}`;
+    logs.push(line);
+    if (logs.length > 200) logs.shift();
+  };
+
+  const updateProgress = async (params: {
+    running: boolean;
+    phase: string;
+    message: string;
+    finishedAt?: string;
+    error?: string;
+  }): Promise<void> => {
+    appendLog(params.message);
+    await saveRunProgress(env, {
+      running: params.running,
+      runId,
+      totalSteps,
+      completedSteps,
+      phase: params.phase,
+      message: params.message,
+      percent: params.running
+        ? Math.round((completedSteps / totalSteps) * 100)
+        : params.phase === "完成"
+          ? 100
+          : Math.round((completedSteps / totalSteps) * 100),
+      startedAt: nowIso,
+      finishedAt: params.finishedAt,
+      error: params.error,
+      logs: [...logs],
+    });
+  };
+
+  await updateProgress({
     running: true,
-    runId,
-    totalSteps,
-    completedSteps,
     phase: "测速",
     message: "开始执行全节点测速",
-    percent: 0,
-    startedAt: nowIso,
   });
 
   const maxConcurrency = Math.max(1, cfg.policy.maxConcurrency);
@@ -207,19 +237,15 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
           nowIso,
         });
       } catch (error) {
+        appendLog(`测速失败 region=${job.region} isp=${job.isp}`);
         console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
       }
 
       completedSteps += 1;
-      await saveRunProgress(env, {
+      await updateProgress({
         running: true,
-        runId,
-        totalSteps,
-        completedSteps,
         phase: "测速",
         message: `测速进度 ${completedSteps}/${jobs.length}（并发 ${maxConcurrency}）`,
-        percent: Math.round((completedSteps / totalSteps) * 100),
-        startedAt: nowIso,
       });
     }
   };
@@ -231,55 +257,19 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
 
   const dnsTargets = buildDnsTargets(state.lastBest);
   const output = cfg.output;
-  await saveRunProgress(env, {
-    running: true,
-    runId,
-    totalSteps,
-    completedSteps,
-    phase: "DNS",
-    message: "同步 DNS: ct",
-    percent: Math.round((completedSteps / totalSteps) * 100),
-    startedAt: nowIso,
-  });
+  await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: ct" });
   const ct = await syncARecordSet(env, output.ctRecord, dnsTargets.ct, output);
   completedSteps += 1;
 
-  await saveRunProgress(env, {
-    running: true,
-    runId,
-    totalSteps,
-    completedSteps,
-    phase: "DNS",
-    message: "同步 DNS: cu",
-    percent: Math.round((completedSteps / totalSteps) * 100),
-    startedAt: nowIso,
-  });
+  await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cu" });
   const cu = await syncARecordSet(env, output.cuRecord, dnsTargets.cu, output);
   completedSteps += 1;
 
-  await saveRunProgress(env, {
-    running: true,
-    runId,
-    totalSteps,
-    completedSteps,
-    phase: "DNS",
-    message: "同步 DNS: cm",
-    percent: Math.round((completedSteps / totalSteps) * 100),
-    startedAt: nowIso,
-  });
+  await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cm" });
   const cm = await syncARecordSet(env, output.cmRecord, dnsTargets.cm, output);
   completedSteps += 1;
 
-  await saveRunProgress(env, {
-    running: true,
-    runId,
-    totalSteps,
-    completedSteps,
-    phase: "DNS",
-    message: "同步 DNS: cf",
-    percent: Math.round((completedSteps / totalSteps) * 100),
-    startedAt: nowIso,
-  });
+  await updateProgress({ running: true, phase: "DNS", message: "同步 DNS: cf" });
   const cf = await syncARecordSet(env, output.cfRecord, dnsTargets.cf, output);
   completedSteps += 1;
 
@@ -298,15 +288,10 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
   };
 
   await env.STATE_KV.put(STATE_LAST_RUN_PAYLOAD, JSON.stringify(payload));
-  await saveRunProgress(env, {
+  await updateProgress({
     running: false,
-    runId,
-    totalSteps,
-    completedSteps,
     phase: "完成",
     message: "执行完成",
-    percent: 100,
-    startedAt: nowIso,
     finishedAt: new Date().toISOString(),
   });
   return payload;
@@ -342,6 +327,10 @@ async function triggerManualRun(
         startedAt: partial?.startedAt ?? nowIso,
         finishedAt: nowIso,
         error: error instanceof Error ? error.message : String(error),
+        logs: [
+          ...(partial?.logs ?? []),
+          `[${nowIso}] 执行失败：${error instanceof Error ? error.message : String(error)}`,
+        ].slice(-200),
       });
       console.error("manual run 执行失败", error);
     }),

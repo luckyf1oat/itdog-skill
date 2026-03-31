@@ -12,6 +12,7 @@ interface PanelPayload {
     startedAt: string;
     finishedAt?: string;
     error?: string;
+    logs?: string[];
   } | null;
   selected?: {
     ct: string[];
@@ -41,6 +42,7 @@ export function renderPanelHtml(): string {
     .progress-wrap { margin-top: 8px; }
     .progress-track { width: 100%; height: 12px; background: #f3f4f6; border-radius: 999px; overflow: hidden; }
     .progress-bar { height: 100%; width: 0%; background: #2563eb; transition: width .2s ease; }
+    .console-box { background: #0b1020; color: #d1fae5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; border-radius: 8px; padding: 10px; min-height: 120px; max-height: 260px; overflow: auto; white-space: pre-wrap; }
     code { background: #f3f4f6; padding: 2px 5px; border-radius: 6px; }
     ul { margin: 6px 0 0 18px; }
     .err { color: #dc2626; }
@@ -71,6 +73,11 @@ export function renderPanelHtml(): string {
   <div class="card">
     <strong>最近 DNS 同步结果</strong>
     <div id="dns"></div>
+  </div>
+
+  <div class="card">
+    <strong>实时控制台输出</strong>
+    <div id="console" class="console-box">(暂无日志)</div>
   </div>
 
   <div class="card">
@@ -105,6 +112,7 @@ export function renderPanelHtml(): string {
         bar.style.width = '0%';
         text.textContent = '未开始';
         meta.textContent = '';
+        document.getElementById('console').textContent = '(暂无日志)';
         return;
       }
 
@@ -114,6 +122,15 @@ export function renderPanelHtml(): string {
         ? ('进行中 ' + percent + '%')
         : (progress.phase === '失败' ? '执行失败' : '已完成 100%');
       meta.textContent = (progress.message || '') + '（' + (progress.completedSteps || 0) + '/' + (progress.totalSteps || 0) + '）' + (progress.error ? ('，错误：' + progress.error) : '');
+
+      const consoleEl = document.getElementById('console');
+      const logs = Array.isArray(progress.logs) ? progress.logs : [];
+      if (!logs.length) {
+        consoleEl.textContent = '(暂无日志)';
+      } else {
+        consoleEl.textContent = logs.join('\n');
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
     }
 
     async function loadState() {
