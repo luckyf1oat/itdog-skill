@@ -38,6 +38,10 @@ function toBool(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 async function loadJsonFromKV<T>(
   kv: KVLike,
   key: string,
@@ -91,6 +95,11 @@ export async function loadRuntimeConfig(env: Env): Promise<RuntimeConfig> {
       policyCfg?.minSamples ?? toInt(env.POLICY_DEFAULT_MIN_SAMPLES, 1),
     wsTimeoutSec:
       policyCfg?.wsTimeoutSec ?? toInt(env.POLICY_DEFAULT_WS_TIMEOUT_SEC, 10),
+    maxConcurrency: clampInt(
+      policyCfg?.maxConcurrency ?? toInt(env.POLICY_DEFAULT_MAX_CONCURRENCY, 8),
+      1,
+      24,
+    ),
   };
 
   const output: OutputRecordsConfig = {

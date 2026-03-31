@@ -182,38 +182,50 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
     startedAt: nowIso,
   });
 
-  for (const job of jobs) {
-    try {
-      const metrics = await probeBatchPing(
-        cfg.targets,
-        job.nodes,
-        cfg.policy.wsTimeoutSec,
-      );
-      updateBestForPair({
-        region: job.region,
-        isp: job.isp,
-        metrics,
-        policy: cfg.policy,
-        lastBest: state.lastBest,
-        pending: state.pending,
-        nowIso,
-      });
-    } catch (error) {
-      console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
-    }
+  const maxConcurrency = Math.max(1, cfg.policy.maxConcurrency);
+  let nextJobIndex = 0;
 
-    completedSteps += 1;
-    await saveRunProgress(env, {
-      running: true,
-      runId,
-      totalSteps,
-      completedSteps,
-      phase: "测速",
-      message: `测速进度 ${completedSteps}/${jobs.length}`,
-      percent: Math.round((completedSteps / totalSteps) * 100),
-      startedAt: nowIso,
-    });
-  }
+  const runJobWorker = async (): Promise<void> => {
+    while (nextJobIndex < jobs.length) {
+      const currentIndex = nextJobIndex;
+      nextJobIndex += 1;
+      const job = jobs[currentIndex];
+
+      try {
+        const metrics = await probeBatchPing(
+          cfg.targets,
+          job.nodes,
+          cfg.policy.wsTimeoutSec,
+        );
+        updateBestForPair({
+          region: job.region,
+          isp: job.isp,
+          metrics,
+          policy: cfg.policy,
+          lastBest: state.lastBest,
+          pending: state.pending,
+          nowIso,
+        });
+      } catch (error) {
+        console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
+      }
+
+      completedSteps += 1;
+      await saveRunProgress(env, {
+        running: true,
+        runId,
+        totalSteps,
+        completedSteps,
+        phase: "测速",
+        message: `测速进度 ${completedSteps}/${jobs.length}（并发 ${maxConcurrency}）`,
+        percent: Math.round((completedSteps / totalSteps) * 100),
+        startedAt: nowIso,
+      });
+    }
+  };
+
+  const workerCount = Math.min(maxConcurrency, jobs.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, () => runJobWorker()));
 
   await saveState(env.STATE_KV, state.lastBest, state.pending);
 

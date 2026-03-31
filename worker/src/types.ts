@@ -19,6 +19,7 @@ export interface PolicyConfig {
   requiredStreak: number;
   minSamples: number;
   wsTimeoutSec: number;
+  maxConcurrency: number;
 }
 
 export interface OutputRecordsConfig {
@@ -65,6 +66,7 @@ export interface Env {
   POLICY_DEFAULT_REQUIRED_STREAK: string;
   POLICY_DEFAULT_MIN_SAMPLES: string;
   POLICY_DEFAULT_WS_TIMEOUT_SEC: string;
+  POLICY_DEFAULT_MAX_CONCURRENCY?: string;
 
   CT_RECORD?: string;
   CU_RECORD?: string;
