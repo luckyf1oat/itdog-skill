@@ -94,7 +94,7 @@ export function renderPanelHtml(): string {
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || '加载配置失败');
         const targets = (data.targets && Array.isArray(data.targets.targets)) ? data.targets.targets : [];
-        document.getElementById('cfgTargets').value = targets.join('\n');
+        document.getElementById('cfgTargets').value = targets.join('\\n');
 
         const output = data.output || {};
         document.getElementById('ctRecord').value = output.ctRecord || '';
@@ -155,7 +155,7 @@ export function renderPanelHtml(): string {
       status.textContent = '保存配置中...';
       try {
         const targetLines = document.getElementById('cfgTargets').value
-          .split(/\r?\n/)
+          .split(/\\r?\\n/)
           .map(s => s.trim())
           .filter(Boolean);
         const payload = {
