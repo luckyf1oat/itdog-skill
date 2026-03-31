@@ -124,9 +124,19 @@ npm run deploy
 - `CLOUDFLARE_API_TOKEN`（可部署 Worker 且可管理 KV/脚本）
 - `CLOUDFLARE_ACCOUNT_ID`
 
+可选配置（GitHub Actions Variables）：
+
+- `CONFIG_KV_TITLE`（默认 `itdog-workers-optimizer-config`）
+- `STATE_KV_TITLE`（默认 `itdog-workers-optimizer-state`）
+
 然后确保 `worker/wrangler.toml` 中：
 
 - `name` 为你的 Worker 名称
 - 两个 KV namespace id 已替换为真实值
 
-工作流会自动执行：`npm ci` -> `npm run typecheck` -> `wrangler deploy`。
+工作流会自动执行：
+
+1. `npm ci`
+2. 调用 Cloudflare API 自动“查找或创建”两个 KV namespace，并把 id 写入 `wrangler.toml`
+3. `npm run typecheck`
+4. `wrangler deploy`

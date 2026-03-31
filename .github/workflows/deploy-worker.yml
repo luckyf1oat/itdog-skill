@@ -32,6 +32,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Ensure KV namespaces exist and bind into wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONFIG_KV_TITLE: ${{ vars.CONFIG_KV_TITLE }}
+          STATE_KV_TITLE: ${{ vars.STATE_KV_TITLE }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID in GitHub Secrets"
+            exit 1
+          fi
+
+          CONFIG_KV_TITLE="${CONFIG_KV_TITLE:-itdog-workers-optimizer-config}"
+          STATE_KV_TITLE="${STATE_KV_TITLE:-itdog-workers-optimizer-state}"
+
+          echo "CONFIG_KV_TITLE=$CONFIG_KV_TITLE"
+          echo "STATE_KV_TITLE=$STATE_KV_TITLE"
+
+          list_resp=$(curl -sS \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=1000&page=1")
+
+          extract_id() {
+            python -c "import json,sys; d=json.loads(sys.argv[1]); t=sys.argv[2]; print(next((i.get('id','') for i in d.get('result',[]) if i.get('title')==t), ''))" "$1" "$2"
+          }
+
+          create_ns() {
+            curl -sS -X POST \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces" \
+              --data "{\"title\":\"$1\"}"
+          }
+
+          CONFIG_KV_ID=$(extract_id "$list_resp" "$CONFIG_KV_TITLE")
+          if [ -z "$CONFIG_KV_ID" ]; then
+            create_resp=$(create_ns "$CONFIG_KV_TITLE")
+            CONFIG_KV_ID=$(python -c "import json,sys; d=json.loads(sys.argv[1]); print((d.get('result') or {}).get('id',''))" "$create_resp")
+          fi
+
+          STATE_KV_ID=$(extract_id "$list_resp" "$STATE_KV_TITLE")
+          if [ -z "$STATE_KV_ID" ]; then
+            create_resp=$(create_ns "$STATE_KV_TITLE")
+            STATE_KV_ID=$(python -c "import json,sys; d=json.loads(sys.argv[1]); print((d.get('result') or {}).get('id',''))" "$create_resp")
+          fi
+
+          if [ -z "$CONFIG_KV_ID" ] || [ -z "$STATE_KV_ID" ]; then
+            echo "Failed to resolve KV namespace ids"
+            exit 1
+          fi
+
+          python -c "import re,sys; p='wrangler.toml'; t=open(p,'r',encoding='utf-8').read(); c=sys.argv[1]; s=sys.argv[2]; t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"CONFIG_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', r'\\1'+c+r'\\2', t, flags=re.MULTILINE); t=re.sub(r'(\\[\\[kv_namespaces\\]\\]\\s*\\n\\s*binding\\s*=\\s*\"STATE_KV\"\\s*\\n\\s*id\\s*=\\s*\")[^\"]*(\")', r'\\1'+s+r'\\2', t, flags=re.MULTILINE); open(p,'w',encoding='utf-8').write(t); print('Bound CONFIG_KV id:', c); print('Bound STATE_KV id:', s)" "$CONFIG_KV_ID" "$STATE_KV_ID"
+
       - name: Type check
         run: npm run typecheck
 

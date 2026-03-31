@@ -195,6 +195,11 @@ npm run dev
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
+可选 GitHub Actions Variables：
+
+- `CONFIG_KV_TITLE`（默认 `itdog-workers-optimizer-config`）
+- `STATE_KV_TITLE`（默认 `itdog-workers-optimizer-state`）
+
 更详细配置与 KV 写入步骤请查看：[`worker/README.md`](worker/README.md)
 
 ## 📄 License
