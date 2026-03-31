@@ -265,7 +265,8 @@ async function runScheduled(env: Env, runId = new Date().toISOString()): Promise
           nowIso,
         });
       } catch (error) {
-        appendLog(`测速失败 region=${job.region} isp=${job.isp}`);
+        const reason = error instanceof Error ? error.message : String(error);
+        appendLog(`测速失败 region=${job.region} isp=${job.isp} reason=${reason}`);
         console.error(`测速失败 region=${job.region} isp=${job.isp}`, error);
       }
 
