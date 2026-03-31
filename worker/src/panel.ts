@@ -102,15 +102,25 @@ export function renderPanelHtml(): string {
   <script>
     let outputExtra = { ttl: 60, proxied: false };
     let progressTimer = null;
+    let serverConsoleLogs = [];
+    let localConsoleLogs = [];
+
+    function renderConsole() {
+      const consoleEl = document.getElementById('console');
+      const merged = [...serverConsoleLogs, ...localConsoleLogs].slice(-300);
+      if (!merged.length) {
+        consoleEl.textContent = '(暂无日志)';
+      } else {
+        consoleEl.textContent = merged.join('\\n');
+      }
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
 
     function appendConsoleLine(line) {
-      const consoleEl = document.getElementById('console');
       const prefix = '[' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '] ';
-      const previous = (consoleEl.textContent && consoleEl.textContent !== '(暂无日志)')
-        ? (consoleEl.textContent + '\\n')
-        : '';
-      consoleEl.textContent = previous + prefix + line;
-      consoleEl.scrollTop = consoleEl.scrollHeight;
+      localConsoleLogs.push(prefix + '[UI] ' + line);
+      if (localConsoleLogs.length > 120) localConsoleLogs.shift();
+      renderConsole();
     }
 
     function setProgress(progress) {
@@ -122,7 +132,8 @@ export function renderPanelHtml(): string {
         bar.style.width = '0%';
         text.textContent = '未开始';
         meta.textContent = '';
-        document.getElementById('console').textContent = '(暂无日志)';
+        serverConsoleLogs = [];
+        renderConsole();
         return;
       }
 
@@ -133,14 +144,8 @@ export function renderPanelHtml(): string {
         : (progress.phase === '失败' ? '执行失败' : '已完成 100%');
       meta.textContent = (progress.message || '') + '（' + (progress.completedSteps || 0) + '/' + (progress.totalSteps || 0) + '）' + (progress.error ? ('，错误：' + progress.error) : '');
 
-      const consoleEl = document.getElementById('console');
-      const logs = Array.isArray(progress.logs) ? progress.logs : [];
-      if (!logs.length) {
-        consoleEl.textContent = '(暂无日志)';
-      } else {
-        consoleEl.textContent = logs.join('\\n');
-        consoleEl.scrollTop = consoleEl.scrollHeight;
-      }
+      serverConsoleLogs = Array.isArray(progress.logs) ? progress.logs : [];
+      renderConsole();
     }
 
     async function loadState() {
